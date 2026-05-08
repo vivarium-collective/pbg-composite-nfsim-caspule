@@ -6,6 +6,8 @@ a modified LAMMPS) to a **non-spatial rule-based simulation**
 ([NFSim/BioNetGen](https://github.com/vivarium-collective/pbg-nfsim))
 through a configurable `ObservableDetector` Step.
 
+**[View Interactive Demo Report](https://vivarium-collective.github.io/pbg-composite-nfsim-caspule/)** — four tabbed experiments (decoupled baseline, simple Dimer coupling, NFSim at 5x rate, and a multi-rule polymer-fractionation set-up), each showing the time-series of cross-process coupling, a 3D scatter of CASPULE positions and bond edges, the cluster-size distribution, the detector-rules table, the LAMMPS / BNGL / YAML input files, and a collapsible JSON tree of the full PBG document.
+
 The detector reads CASPULE's live atom positions, atom types, and
 global bond list every step, applies a YAML-configured set of
 detection rules, and:
