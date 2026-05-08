@@ -1,10 +1,12 @@
 """Demo: pbg-composite-nfsim-caspule cross-process coupling report.
 
 Runs four configurations of the composite and emits a single
-self-contained HTML with tabbed navigation. Each tab shows the
-PBG document (collapsible), the detector config, the CASPULE input
-script, the time-series of cross-process coupling, the final spatial
-state (3D scatter + cluster histogram), and a summary table.
+self-contained scrollable HTML report. The top of the page has a
+sticky anchor-link nav and a "compare configs" panel that overlays
+all four runs on the same axes; below, each experiment gets its own
+section with a computed key-takeaway, time-series, spatial-state
+visualisation, matter-balance summary, detector rules, the input
+files (collapsible), and the full PBG document (collapsible JSON tree).
 
 Configurations:
 
@@ -504,91 +506,324 @@ PALETTE_BY_CFG = {
                   ('Active',  '#16a34a')],
 }
 
+# Per-section accent color used for the side bar, headers, and the
+# trace color in the comparison panel at the top of the report.
+ACCENT_BY_CFG = {
+    'decoupled': '#94a3b8',  # slate-grey: "nothing should happen"
+    'coupled':   '#1e40af',  # blue: the canonical wiring
+    'stressed':  '#9333ea',  # violet: same coupling, faster pool turnover
+    'polymer':   '#b45309',  # amber: the multi-rule, polymer-rich set-up
+}
+
+
+def _peak(seq):
+    return max(seq) if seq else 0
+
+
+def compute_takeaway(cfg, result, series):
+    """A short interpretation of what just happened, computed from
+    the actual run results so the numbers always match the charts.
+    Returns plain HTML — used inside a callout box at the top of
+    each section.
+    """
+    s_init  = result['initial_spatial']
+    s_final = result['final_spatial']
+    atoms_init    = max(s_init['num_atoms'], _peak(series['num_atoms']) or 0)
+    atoms_final   = s_final['num_atoms']
+    atoms_drained = max(0, atoms_init - atoms_final)
+
+    species_final = {
+        n: (series[n][-1] if series.get(n) else 0.0)
+        for n, _ in PALETTE_BY_CFG[cfg['id']]
+    }
+    species_peak = {
+        n: _peak(series.get(n) or [])
+        for n, _ in PALETTE_BY_CFG[cfg['id']]
+    }
+
+    if cfg['id'] == 'decoupled':
+        species_total = sum(species_final.values())
+        ok = (atoms_drained == 0) and (species_total == 0.0)
+        verdict = '✅ Sanity check passed.' if ok else '⚠ Unexpected leak detected.'
+        return (
+            f'<b>{verdict}</b> With the bridge cut, no matter flows. '
+            f'CASPULE retained <b>{atoms_final}</b> atoms throughout '
+            f'(drained: {atoms_drained}), and NFSim\'s species pool '
+            f'stayed at <b>{int(species_total)}</b>.'
+        )
+
+    if cfg['id'] == 'coupled':
+        # Each detected dimer removes 2 atoms — atoms_drained / 2 is the
+        # cumulative detection count; what remains in the species pool at
+        # the end has been partially consumed by the kinetics network.
+        cum_dimers = atoms_drained // 2
+        return (
+            f'<b>{atoms_drained}</b> atoms drained from CASPULE '
+            f'(≈ <b>{cum_dimers}</b> dimer detection events at 2 atoms each). '
+            f'NFSim\'s downstream <code>Active</code> form peaked at '
+            f'<b>{int(species_peak.get("Active", 0))}</b> while '
+            f'<code>Dimer</code> peaked at '
+            f'<b>{int(species_peak.get("Dimer", 0))}</b>; both decay toward '
+            f'zero as the BNGL rules consume them.'
+        )
+
+    if cfg['id'] == 'stressed':
+        return (
+            f'NFSim ticks 5× faster, so its decay channel keeps pace with '
+            f'the detector\'s deliveries. <b>{atoms_drained}</b> atoms drained '
+            f'from CASPULE, but the species pool reached a quasi-steady balance '
+            f'instead of monotone growth — '
+            f'<code>Dimer</code> peaked at <b>{int(species_peak.get("Dimer", 0))}</b>, '
+            f'<code>Active</code> at <b>{int(species_peak.get("Active", 0))}</b>, '
+            f'final values now at '
+            f'<b>{int(species_final.get("Dimer", 0))}</b> / '
+            f'<b>{int(species_final.get("Active", 0))}</b>.'
+        )
+
+    if cfg['id'] == 'polymer':
+        dimer_peak   = species_peak.get('Dimer', 0)
+        trimer_peak  = species_peak.get('Trimer', 0)
+        polymer_peak = species_peak.get('Polymer', 0)
+        # In the polymer config, only Dimer and Trimer are removed.
+        # Polymer atoms (size ≥ 4) stay in CASPULE — final clusters are visible
+        # in the 3D scatter at the bottom of this section.
+        large_clusters = sum(1 for s in s_final.get('cluster_sizes', []) if s >= 4)
+        return (
+            f'Multi-rule fractionation. CASPULE went from '
+            f'<b>{atoms_init}</b> to <b>{atoms_final}</b> atoms — '
+            f'<b>{atoms_drained}</b> drained as the small fragments were '
+            f'pulled into NFSim. Detector hit-counts peaked at: '
+            f'<code>Dimer</code> {int(dimer_peak)}, '
+            f'<code>Trimer</code> {int(trimer_peak)}, '
+            f'<code>Polymer</code> {int(polymer_peak)}. '
+            f'<b>{large_clusters}</b> clusters of size ≥ 4 remain in the '
+            f'spatial pool (visible in the 3D scatter below).'
+        )
+
+    return ''
+
+
+def comparison_charts(panels):
+    """Two side-by-side overlays comparing all four configs. Makes the
+    decoupled / coupled / stressed / polymer differences obvious without
+    making the user click through tabs."""
+    atom_traces = []
+    species_traces = []
+    for p in panels:
+        cfg = p['cfg']
+        series = p['series']
+        color = ACCENT_BY_CFG[cfg['id']]
+        atom_traces.append({
+            'x': series['time'], 'y': series['num_atoms'],
+            'type': 'scatter', 'mode': 'lines', 'name': cfg['title'],
+            'line': {'color': color, 'width': 2},
+        })
+        # Total NFSim species count = sum of palette entries.
+        names = [n for n, _ in PALETTE_BY_CFG[cfg['id']]]
+        zipped = zip(*(series[n] for n in names if n in series))
+        total = [sum(vals) for vals in zipped] if names else []
+        species_traces.append({
+            'x': series['time'], 'y': total,
+            'type': 'scatter', 'mode': 'lines', 'name': cfg['title'],
+            'line': {'color': color, 'width': 2},
+        })
+    return [
+        {
+            'id': 'cmp-atoms',
+            'data': atom_traces,
+            'layout': {
+                'title': 'CASPULE atom count vs time',
+                'xaxis': {'title': 'time (lj units)'},
+                'yaxis': {'title': 'CASPULE atoms remaining'},
+                'legend': {'orientation': 'h', 'y': -0.2},
+                'margin': {'t': 40, 'r': 20, 'b': 70, 'l': 60},
+                'height': 320,
+            },
+        },
+        {
+            'id': 'cmp-species',
+            'data': species_traces,
+            'layout': {
+                'title': 'NFSim non-spatial pool (sum of all observables) vs time',
+                'xaxis': {'title': 'time (lj units)'},
+                'yaxis': {'title': 'total species in pool'},
+                'legend': {'orientation': 'h', 'y': -0.2},
+                'margin': {'t': 40, 'r': 20, 'b': 70, 'l': 60},
+                'height': 320,
+            },
+        },
+    ]
+
 
 def render_panel(cfg, result):
     series = history_to_series(result['history'],
                                names=tuple(n for n, _ in PALETTE_BY_CFG[cfg['id']]))
-    main_chart = chart_block(cfg, series, PALETTE_BY_CFG[cfg['id']])
+    accent = ACCENT_BY_CFG[cfg['id']]
+    takeaway_html = compute_takeaway(cfg, result, series)
+
+    main_chart      = chart_block(cfg, series, PALETTE_BY_CFG[cfg['id']])
     scatter_initial = spatial_3d_block(cfg, result['initial_spatial'], 'early')
     scatter_final   = spatial_3d_block(cfg, result['final_spatial'],   'end')
     hist_final      = cluster_histogram_block(cfg, result['final_spatial'], 'end')
 
-    extra_charts = [main_chart]
-    extra_charts += [c for c in (scatter_initial, scatter_final, hist_final)
-                     if c is not None]
+    section_charts = [main_chart]
+    section_charts += [c for c in (scatter_initial, scatter_final, hist_final)
+                       if c is not None]
 
-    summary = {
-        'final time':          series['time'][-1] if series['time'] else None,
-        'CASPULE atoms (init)': result['initial_spatial']['num_atoms'],
-        'CASPULE atoms (end)':  result['final_spatial']['num_atoms'],
-        'CASPULE bonds (end)':  result['final_spatial']['num_bonds'],
-        **{f'NFSim {n}': series[n][-1] if series[n] else 0.0
-           for n, _ in PALETTE_BY_CFG[cfg['id']]},
+    # Matter-balance summary: makes the cross-process flow legible.
+    s_init  = result['initial_spatial']
+    s_final = result['final_spatial']
+    atoms_init    = max(s_init['num_atoms'],
+                        max(series['num_atoms'] or [0]) if series['num_atoms'] else 0)
+    atoms_final   = s_final['num_atoms']
+    atoms_drained = max(0, atoms_init - atoms_final)
+    species_final = {
+        n: int(round(series[n][-1])) if series.get(n) else 0
+        for n, _ in PALETTE_BY_CFG[cfg['id']]
     }
 
+    matter_rows = [
+        ('CASPULE atoms (initial)', atoms_init),
+        ('CASPULE atoms (final)',   atoms_final),
+        ('Atoms drained → detector', atoms_drained),
+        ('CASPULE bonds (final)',   s_final['num_bonds']),
+    ]
+    for n, _color in PALETTE_BY_CFG[cfg['id']]:
+        matter_rows.append((f'NFSim {n} (final)', species_final.get(n, 0)))
     summary_rows = ''.join(
-        f'<tr><th>{k}</th><td>{v}</td></tr>'
-        for k, v in summary.items()
+        f'<tr><th>{k}</th><td>{v}</td></tr>' for k, v in matter_rows
     )
 
     detector_rules_html = render_detector_rules(cfg['detector_rules'])
     json_tree_html = render_json_tree(result['doc'], '', open_default=True)
-
     chart_divs = ''.join(
-        f'<div id="{c["id"]}" class="chart"></div>' for c in extra_charts
+        f'<div id="{c["id"]}" class="chart"></div>' for c in section_charts
     )
 
     return {
         'html': f"""
-<section id="tab-{cfg['id']}" class="tab">
-  <h2>{cfg['title']}</h2>
-  <p>{cfg['description']}</p>
+<section id="sec-{cfg['id']}" class="exp-section"
+         style="border-left: 4px solid {accent};">
+  <header class="exp-header">
+    <span class="exp-tag" style="background: {accent};">{cfg['id']}</span>
+    <h2>{cfg['title']}</h2>
+  </header>
+  <p class="exp-desc">{cfg['description']}</p>
+
+  <div class="callout takeaway">
+    <span class="callout-label">Key takeaway</span>
+    <span class="callout-body">{takeaway_html}</span>
+  </div>
 
   <div class="meta">
     caspule_interval = {cfg['caspule_interval']} &nbsp;|&nbsp;
-    nfsim_interval   = {cfg['nfsim_interval']} &nbsp;|&nbsp;
-    total_time       = {cfg['total_time']} &nbsp;|&nbsp;
-    decoupled        = {cfg['decoupled']}
+    nfsim_interval = {cfg['nfsim_interval']} &nbsp;|&nbsp;
+    total_time = {cfg['total_time']} &nbsp;|&nbsp;
+    decoupled = {cfg['decoupled']}
   </div>
 
   <h3>Cross-process time series</h3>
+  <p class="hint">Brown line: CASPULE atom count (left axis).
+  Coloured lines: NFSim species counts (right axis). Watch the brown
+  line drop as the detector pulls atoms out of the spatial pool, and
+  the coloured lines rise as those atoms become non-spatial molecules.</p>
   {chart_divs}
 
-  <h3>Final-run summary</h3>
+  <h3>Matter-balance summary</h3>
   <table class="kv">{summary_rows}</table>
 
   <h3>Observable detector rules</h3>
+  <p class="hint">The detector reads CASPULE\'s spatial bond network
+  and applies these rules each tick to decide which atoms to remove
+  and what to inject into NFSim.</p>
   {detector_rules_html}
 
-  <details>
+  <details class="src">
     <summary><b>CASPULE input script (.in)</b></summary>
     <pre class="script">{_html_escape(cfg['caspule_script'])}</pre>
   </details>
 
-  <details>
+  <details class="src">
     <summary><b>NFSim model file (.bngl)</b></summary>
     <pre class="script">{_html_escape(open(cfg['nfsim_model']).read())}</pre>
   </details>
 
   <h3>Process-bigraph document</h3>
-  <p class="hint">Click a node to expand or collapse it. Top-level
-  process / store nodes are open by default.</p>
+  <p class="hint">The full Composite document used to build this run.
+  Click a node to expand or collapse; top-level process / store nodes
+  are open by default.</p>
   <div class="json-tree">{json_tree_html}</div>
 
 </section>""",
-        'charts': extra_charts,
+        'charts': section_charts,
+        'series': series,
     }
 
 
 def build_html(panels):
     arch_svg = render_architecture_svg()
-    nav = ''.join(
-        f'<button data-tab="{p["cfg"]["id"]}">{p["cfg"]["title"]}</button>'
+
+    # Build the comparison panel from the per-section series data so
+    # the same numbers drive both views.
+    cmp_input = [
+        {'cfg': p['cfg'], 'series': p['rendered']['series']}
+        for p in panels
+    ]
+    cmp_chartlist = comparison_charts(cmp_input)
+
+    nav_links = '<a href="#overview">Overview</a>' + ''.join(
+        f'<a href="#sec-{p["cfg"]["id"]}" '
+        f'style="border-bottom-color:{ACCENT_BY_CFG[p["cfg"]["id"]]};">'
+        f'{p["cfg"]["title"]}</a>'
         for p in panels
     )
+
+    overview_legend = ''.join(
+        f'<span class="leg-pill" style="background:{ACCENT_BY_CFG[p["cfg"]["id"]]};">'
+        f'{p["cfg"]["title"]}</span>'
+        for p in panels
+    )
+
+    overview_html = f'''
+<section id="overview" class="exp-section overview-section">
+  <header class="exp-header">
+    <span class="exp-tag" style="background: #0f172a;">overview</span>
+    <h2>Compare all four configurations</h2>
+  </header>
+  <p class="exp-desc">
+    Both panels overlay the same four runs on the same axes. The left
+    panel shows where the spatial pool is going (CASPULE atoms vs time);
+    the right panel shows where the non-spatial pool ends up (the sum
+    of all NFSim observables). Use them to spot the differences before
+    diving into individual sections.
+  </p>
+  <div class="legend-row">{overview_legend}</div>
+  <div class="cmp-grid">
+    <div id="cmp-atoms"   class="chart"></div>
+    <div id="cmp-species" class="chart"></div>
+  </div>
+  <ul class="hint">
+    <li><b>decoupled</b> stays flat on the left chart and at zero on the right —
+      no matter flows.</li>
+    <li><b>coupled</b> drains CASPULE quickly and pumps the species pool up,
+      then NFSim consumes it.</li>
+    <li><b>stressed</b> has the same drain but a faster NFSim, so the pool
+      reaches a flatter steady state.</li>
+    <li><b>polymer</b> drains CASPULE only partially — clusters of size ≥ 4
+      are left in the spatial pool — but credits Dimer / Trimer / Polymer to
+      NFSim simultaneously.</li>
+  </ul>
+</section>
+'''
+
     sections = ''.join(p['rendered']['html'] for p in panels)
 
     chart_init_lines = []
+    for c in cmp_chartlist:
+        chart_init_lines.append(
+            f"Plotly.newPlot('{c['id']}', "
+            f"{json.dumps(c['data'])}, {json.dumps(c['layout'])}, "
+            "{responsive: true});")
     for p in panels:
         for c in p['rendered']['charts']:
             chart_init_lines.append(
@@ -598,40 +833,98 @@ def build_html(panels):
     chart_init = '\n'.join(chart_init_lines)
 
     css = """
+:root { --accent: #1e40af; }
+* { box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
        max-width: 1100px; margin: 2em auto; padding: 0 1em; color: #222; }
 h1 { border-bottom: 2px solid #1e40af; padding-bottom: 6px; }
-h2 { color: #1e40af; margin-top: 0.4em; }
-h3 { color: #444; margin-top: 1.5em; font-size: 14px; text-transform: uppercase;
-     letter-spacing: 0.04em; }
+h2 { color: #0f172a; margin: 0; }
+h3 { color: #334155; margin-top: 1.6em; font-size: 13px;
+     text-transform: uppercase; letter-spacing: 0.05em; }
 .intro { color: #444; line-height: 1.5; }
 .arch { width: 100%; max-width: 880px; height: auto; margin: 1em 0;
-        border: 1px solid #ddd; border-radius: 6px; padding: 6px; }
-nav.tabs { position: sticky; top: 0; z-index: 50; background: #fff;
-           border-bottom: 2px solid #1e40af; padding: 8px 0; margin: 1em 0 1.5em; }
-nav.tabs button { font: inherit; cursor: pointer; padding: 8px 14px;
-                  margin-right: 6px; border: 1px solid #cbd5e1;
-                  border-radius: 6px; background: #f1f5f9; color: #1e293b; }
-nav.tabs button.active { background: #1e40af; color: #fff; border-color: #1e40af; }
-.tab { display: none; }
-.tab.active { display: block; }
-.meta { font-family: monospace; font-size: 12px; color: #555;
-        background: #f8fafc; padding: 8px 12px; border-radius: 4px; }
-.chart { width: 100%; margin-bottom: 14px; }
-table.rules { border-collapse: collapse; font-size: 13px; margin: 0.5em 0;
-              width: 100%; }
-table.rules th, table.rules td { border: 1px solid #ddd; padding: 6px 10px;
-                                   text-align: left; }
+        border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px;
+        background: #fff; }
+
+/* sticky anchor-link nav */
+nav.toc { position: sticky; top: 0; z-index: 50; background: #ffffffea;
+          backdrop-filter: blur(6px);
+          border-bottom: 1px solid #e2e8f0;
+          padding: 10px 0; margin: 1em 0 1.5em;
+          display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+nav.toc a { font-size: 13px; color: #334155; text-decoration: none;
+            padding: 4px 0; border-bottom: 2px solid transparent;
+            transition: color .15s, border-bottom-color .15s; }
+nav.toc a:hover { color: #0f172a; }
+nav.toc a.current { color: #0f172a; font-weight: 600; }
+nav.toc a[href='#overview'].current { border-bottom-color: #0f172a; }
+
+/* per-experiment section */
+.exp-section { padding: 1.4em 1.4em 1.4em 1.6em;
+               margin: 1.5em 0;
+               background: #f8fafc;
+               border-radius: 0 8px 8px 0;
+               border-left: 4px solid #1e40af;
+               scroll-margin-top: 70px; }
+.overview-section { background: #fff7ed; border-left-color: #0f172a; }
+.exp-header { display: flex; align-items: center; gap: 12px; }
+.exp-tag { font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+           color: #fff; background: #1e40af;
+           padding: 3px 8px; border-radius: 4px;
+           text-transform: uppercase; letter-spacing: 0.06em; }
+.exp-desc { color: #475569; line-height: 1.55; max-width: 850px; margin: .5em 0 0; }
+
+.callout { display: grid; grid-template-columns: 110px 1fr; gap: 12px;
+           background: #fff; border: 1px solid #e2e8f0; border-radius: 6px;
+           padding: 12px 14px; margin: 1em 0; }
+.callout-label { font-size: 11px; text-transform: uppercase;
+                 letter-spacing: .06em; color: #64748b;
+                 align-self: start; padding-top: 2px; }
+.callout-body { color: #1e293b; line-height: 1.55; }
+.callout.takeaway { border-left: 3px solid #1e40af; }
+
+.meta { font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+        color: #475569; background: #fff;
+        padding: 6px 12px; border-radius: 4px;
+        border: 1px dashed #e2e8f0;
+        margin-top: 1em; }
+.chart { width: 100%; margin-bottom: 14px; background: #fff;
+         border-radius: 6px; }
+.cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .cmp-grid { grid-template-columns: 1fr; } }
+
+table.rules { border-collapse: collapse; font-size: 13px; margin: .5em 0;
+              width: 100%; background: #fff; }
+table.rules th, table.rules td { border: 1px solid #e2e8f0;
+                                   padding: 6px 10px; text-align: left; }
 table.rules thead { background: #f1f5f9; }
-table.kv { border-collapse: collapse; font-size: 13px; }
-table.kv th { text-align: left; padding: 4px 14px 4px 0; color: #555;
-              font-weight: 500; }
-table.kv td { padding: 4px 0; font-family: monospace; }
-pre.script { background: #f1f5f9; padding: 0.7em 1em; border-radius: 6px;
-             overflow-x: auto; font-size: 12px; max-height: 320px; }
-.hint { color: #666; font-size: 12px; }
+table.kv { border-collapse: collapse; font-size: 13px; background: #fff;
+           border: 1px solid #e2e8f0; border-radius: 4px;
+           overflow: hidden; }
+table.kv th { text-align: left; padding: 6px 14px;
+              color: #475569; font-weight: 500;
+              border-right: 1px solid #e2e8f0;
+              background: #f8fafc; }
+table.kv td { padding: 6px 14px; font-family: ui-monospace, Menlo, monospace; }
+
+details.src { margin: .5em 0; background: #fff;
+              border: 1px solid #e2e8f0; border-radius: 4px; padding: 0; }
+details.src summary { cursor: pointer; padding: 8px 12px; user-select: none; }
+details.src[open] summary { border-bottom: 1px solid #e2e8f0; }
+pre.script { background: #f8fafc; padding: 0.7em 1em; border-radius: 0 0 4px 4px;
+             overflow-x: auto; font-size: 12px; max-height: 320px;
+             margin: 0; line-height: 1.45; }
+.hint { color: #64748b; font-size: 12px; line-height: 1.55; margin: .4em 0 .8em; }
+ul.hint { padding-left: 1.4em; }
+ul.hint li { margin: .25em 0; }
+
+.legend-row { display: flex; flex-wrap: wrap; gap: 6px; margin: .8em 0 1em; }
+.leg-pill { color: #fff; padding: 4px 10px; border-radius: 999px;
+            font-size: 11px; font-weight: 600;
+            text-transform: lowercase; letter-spacing: .03em; }
+
 .json-tree { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-             font-size: 12px; line-height: 1.55; background: #f8fafc;
+             font-size: 12px; line-height: 1.55; background: #fff;
              padding: 12px; border-radius: 6px; max-height: 600px;
              overflow: auto; border: 1px solid #e2e8f0; }
 .json-tree details { margin-left: 0; }
@@ -648,33 +941,24 @@ pre.script { background: #f1f5f9; padding: 0.7em 1em; border-radius: 6px;
 .json-tree .jt-null { color: #94a3b8; font-style: italic; }
 .json-tree .jt-inline { color: #047857; }
 .json-tree .jt-more { color: #94a3b8; font-style: italic; }
+
+html { scroll-behavior: smooth; }
 """
+
     js = """
-function setActive(id) {
-  document.querySelectorAll('.tab').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
-  const sec = document.getElementById('tab-' + id);
-  const btn = document.querySelector(`nav.tabs button[data-tab='${id}']`);
-  if (sec) sec.classList.add('active');
-  if (btn) btn.classList.add('active');
-  // Plotly re-layouts charts inside the now-visible section.
-  if (sec) {
-    sec.querySelectorAll('.chart').forEach(div => {
-      if (div.children.length) Plotly.Plots.resize(div);
-    });
+// Highlight the current section's link as the user scrolls.
+const links = Array.from(document.querySelectorAll('nav.toc a'));
+const sections = links
+  .map(a => document.querySelector(a.getAttribute('href')))
+  .filter(Boolean);
+const obs = new IntersectionObserver(entries => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const id = '#' + e.target.id;
+    links.forEach(a => a.classList.toggle('current', a.getAttribute('href') === id));
   }
-  if (history && history.replaceState) {
-    history.replaceState(null, '', '#' + id);
-  }
-}
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('nav.tabs button').forEach(b => {
-    b.addEventListener('click', () => setActive(b.dataset.tab));
-  });
-  const initial = (location.hash || '#' +
-    document.querySelector('nav.tabs button').dataset.tab).slice(1);
-  setActive(initial);
-});
+}, { rootMargin: '-30% 0px -65% 0px', threshold: 0 });
+sections.forEach(s => obs.observe(s));
 """
 
     plotly_cdn = (
@@ -695,15 +979,17 @@ LAMMPS / CASPULE simulation into NFSim's non-spatial rule-based pool
 through a configurable <code>ObservableDetector</code> Step. Each
 simulator is configured by its own input file: a LAMMPS
 <code>.in</code> script, a BNGL <code>.bngl</code> model, and a
-detector <code>.yaml</code> rule list. Pick an experiment from the
-tabs below to inspect its time series, final spatial state, detector
-rules, and the full PBG document.
+detector <code>.yaml</code> rule list. Scroll through the sections
+below — or use the menu — to compare four configurations of the
+composite.
 </p>
 
 <h2 style="margin-top: 1.2em;">Architecture</h2>
 {arch_svg}
 
-<nav class="tabs">{nav}</nav>
+<nav class="toc">{nav_links}</nav>
+
+{overview_html}
 
 {sections}
 
