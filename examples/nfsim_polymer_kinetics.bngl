@@ -1,0 +1,44 @@
+# Non-spatial kinetics for the multi-rule polymer-fractionation demo.
+# Each molecule arrives in the pool and decays through a different
+# pathway: dimers activate quickly, trimers activate slowly, polymers
+# decay slowly. All seed counts are exposed as named parameters so
+# NFSimProcess's regex-based count substitution has stable handles.
+begin parameters
+    init_Dimer    0
+    init_Trimer   0
+    init_Polymer  0
+    init_Active   0
+    k_dimer_act   0.30
+    k_trimer_act  0.05
+    k_polymer_dec 0.02
+    k_active_dec  0.05
+end parameters
+
+begin molecule types
+    Dimer()
+    Trimer()
+    Polymer()
+    Active()
+    Decay()
+end molecule types
+
+begin seed species
+    Dimer()    init_Dimer
+    Trimer()   init_Trimer
+    Polymer()  init_Polymer
+    Active()   init_Active
+end seed species
+
+begin observables
+    Molecules Dimer    Dimer()
+    Molecules Trimer   Trimer()
+    Molecules Polymer  Polymer()
+    Molecules Active   Active()
+end observables
+
+begin reaction rules
+    Dimer()   -> Active()    k_dimer_act
+    Trimer()  -> Active()    k_trimer_act
+    Active()  -> Decay()     k_active_dec
+    Polymer() -> Decay()     k_polymer_dec
+end reaction rules

@@ -1,0 +1,22 @@
+# Multi-rule detector: separates the spatial bond-graph into three
+# size buckets and hands them off as distinct NFSim molecules.
+#
+# Dimers and trimers are *removed* from CASPULE on detection — the
+# spatial pool empties as small fragments are recruited into the
+# non-spatial pool. Polymers (size 4+) are *observed but not removed*
+# so the spatial network remains visible in the demo's 3D view.
+rules:
+  - name: Dimer
+    bond_type_cluster: 1
+    min_size: 2
+    max_size: 2
+    remove_from_caspule: true
+  - name: Trimer
+    bond_type_cluster: 1
+    min_size: 3
+    max_size: 3
+    remove_from_caspule: true
+  - name: Polymer
+    bond_type_cluster: 1
+    min_size: 4
+    remove_from_caspule: false
