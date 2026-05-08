@@ -1,0 +1,34 @@
+# Non-spatial kinetics for the dimers handed off from CASPULE.
+# A Dimer arrives in the pool, reversibly converts to an Active form,
+# and Active dimers slowly degrade. Seed counts are exposed as named
+# parameters (init_Dimer, init_Active) so NFSimProcess's regex-based
+# count substitution has stable handles to bind to.
+begin parameters
+    init_Dimer    0
+    init_Active   0
+    k_activate    0.1
+    k_deactivate  0.05
+    k_decay       0.01
+end parameters
+
+begin molecule types
+    Dimer()
+    Active()
+    Decay()
+end molecule types
+
+begin seed species
+    Dimer()    init_Dimer
+    Active()   init_Active
+end seed species
+
+begin observables
+    Molecules Dimer    Dimer()
+    Molecules Active   Active()
+end observables
+
+begin reaction rules
+    Dimer() -> Active()    k_activate
+    Active() -> Dimer()    k_deactivate
+    Active() -> Decay()    k_decay
+end reaction rules

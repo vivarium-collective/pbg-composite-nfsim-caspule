@@ -1,0 +1,13 @@
+# ObservableDetector rules for the dimerization composite.
+#
+# Each rule maps a CASPULE-side spatial pattern to one NFSim observable
+# name. `bond_type_cluster: 1` finds connected components of atoms
+# linked by bond-type 1; `min_size: 2 max_size: 2` restricts to true
+# dimers (one bond, two atoms). Matching atoms are removed from CASPULE
+# so they don't get counted again on the next tick.
+rules:
+  - name: Dimer
+    bond_type_cluster: 1
+    min_size: 2
+    max_size: 2
+    remove_from_caspule: true
