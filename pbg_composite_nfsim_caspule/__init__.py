@@ -2,16 +2,24 @@
 coupled through an observable detector that converts spatial bond
 clusters in CASPULE into species counts in NFSim's non-spatial pool.
 
-Public surface:
-    build_core()        - allocate a process-bigraph core with every class registered
-    build_document()    - build the Composite document from the wiring map
-    ObservableDetector  - the detector Step
-    DetectorConfig      - parsed YAML rule list
+The fastest way to run a simulation is to point the bundled CLI at a
+PBG JSON document plus optional overrides for the three input files::
 
-Each simulator is configured by a standard input file:
+    python -m pbg_composite_nfsim_caspule examples/composite_dimer.pbg.json
+
+Or in Python::
+
+    from pbg_composite_nfsim_caspule import run
+    run('examples/composite_dimer.pbg.json', total_time=2.0)
+
+Each simulator is configured by its own input file standard:
+
     CASPULE  <- LAMMPS .in script
     NFSim    <- BNGL .bngl file
     Detector <- YAML rules file
+
+The PBG JSON references those by relative path, resolved against the
+JSON file's directory.
 """
 
 from pbg_composite_nfsim_caspule.detector import (
@@ -23,6 +31,11 @@ from pbg_composite_nfsim_caspule.detector import (
 from pbg_composite_nfsim_caspule.core import build_core
 from pbg_composite_nfsim_caspule.document import build_document
 from pbg_composite_nfsim_caspule.wiring import WIRING
+from pbg_composite_nfsim_caspule.run import (
+    run,
+    load_document,
+    resolve_input_paths,
+)
 
 __all__ = [
     'ObservableDetector',
@@ -32,4 +45,7 @@ __all__ = [
     'build_core',
     'build_document',
     'WIRING',
+    'run',
+    'load_document',
+    'resolve_input_paths',
 ]

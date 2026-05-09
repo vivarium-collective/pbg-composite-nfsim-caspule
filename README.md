@@ -1,94 +1,100 @@
 # pbg-composite-nfsim-caspule
 
-A process-bigraph composite that couples a **spatial bond-aware MD
-simulation** ([CASPULE](https://github.com/vivarium-collective/pbg-caspule),
-a modified LAMMPS) to a **non-spatial rule-based simulation**
+A process-bigraph composite that hands matter from a **spatial bond-aware
+MD simulation**
+([CASPULE](https://github.com/vivarium-collective/pbg-caspule), a
+modified LAMMPS) into a **non-spatial rule-based simulation**
 ([NFSim/BioNetGen](https://github.com/vivarium-collective/pbg-nfsim))
-through a configurable `ObservableDetector` Step.
+through a configurable **`ObservableDetector`** Step. The detector
+watches CASPULE's bond network, picks up clusters that match
+user-defined patterns, removes the matched atoms from CASPULE, and
+credits each match as a named molecule in NFSim's species pool.
 
-**[View Interactive Demo Report](https://vivarium-collective.github.io/pbg-composite-nfsim-caspule/)** — four tabbed experiments (decoupled baseline, simple Dimer coupling, NFSim at 5x rate, and a multi-rule polymer-fractionation set-up), each showing the time-series of cross-process coupling, a 3D scatter of CASPULE positions and bond edges, the cluster-size distribution, the detector-rules table, the LAMMPS / BNGL / YAML input files, and a collapsible JSON tree of the full PBG document.
+**[View Interactive Demo Report](https://vivarium-collective.github.io/pbg-composite-nfsim-caspule/)** — four side-by-side experiments (decoupled baseline, simple Dimer coupling, NFSim at 5x rate, and a multi-rule polymer-fractionation set-up), each with a key-takeaway summary, time-series plots, a 3D scatter of CASPULE positions and bond edges, the cluster-size distribution, the detector rules, the LAMMPS / BNGL / YAML input files, and a collapsible JSON tree of the full PBG document.
 
-The detector reads CASPULE's live atom positions, atom types, and
-global bond list every step, applies a YAML-configured set of
-detection rules, and:
+## How to use it
 
-1. Removes the matched atoms from CASPULE so the spatial pool no
-   longer carries them.
-2. Credits each match as one molecule of a named NFSim observable, so
-   the non-spatial pool grows at the rate clusters appear in the
-   spatial pool.
+A simulation is fully specified by **four files**:
 
-This is the canonical pattern for handing matter from a *resolved*
-representation (atoms + bonds in space) to a *coarse-grained* one
-(species counts in a non-spatial pool).
-
-## Architecture
-
-```
-                +----------+    positions/bonds/    +----------+    molecule_     +-------+
-                |          |    atom_types          |          |    additions     |       |
-input.in -----> | CASPULE  | ---------------------> | Detector | ---------------> | NFSim | <-- input.bngl
-                |          | <--------------------- |          |                  |       |     (rules)
-                +----------+    atoms_to_remove     +----------+                  +-------+
-                                                          ^
-                                                          | input.yaml (rules)
-```
-
-Three input files configure the simulation:
-
-| File | Used by | Purpose |
+| File | Configures | Format |
 |---|---|---|
-| `*.in` (LAMMPS / CASPULE script) | CASPULE | spatial dynamics, bond formation |
-| `*.bngl` (BioNetGen Language) | NFSim | non-spatial reaction rules |
-| `*.yaml` (detector rules) | ObservableDetector | which clusters become which molecules |
+| `*.pbg.json`  | The composite (which Process / Step instances exist, how they're wired) | JSON |
+| `*.in`        | CASPULE — spatial dynamics, bond formation/breaking | LAMMPS / CASPULE script |
+| `*.bngl`      | NFSim — non-spatial reaction rules and species | BioNetGen Language |
+| `*.yaml`      | ObservableDetector — which clusters become which molecules | YAML rule list |
 
-## Connection table
+Two ready-to-run PBG bundles ship in [`examples/`](examples/):
 
-The full wiring is in [`pbg_composite_nfsim_caspule/wiring.py`](pbg_composite_nfsim_caspule/wiring.py).
+```text
+examples/
+├── composite_dimer.pbg.json     ← simple "all dimers → NFSim" set-up
+├── caspule_dimerize.in
+├── nfsim_dimer_kinetics.bngl
+├── detector_dimer.yaml
+│
+├── composite_polymer.pbg.json   ← multi-rule fractionation: dimers + trimers + polymers
+├── caspule_polymer.in
+├── nfsim_polymer_kinetics.bngl
+└── detector_polymer.yaml
+```
 
-| # | Producer | Port | Schema | Case | Consumer | Port |
-|---|---|---|---|---|---|---|
-| 1 | caspule | positions | `overwrite[list]` | pass-through | detector | positions |
-| 2 | caspule | bonds | `overwrite[list]` | pass-through | detector | bonds |
-| 3 | caspule | atom_types | `overwrite[list]` | pass-through | detector | atom_types |
-| 4 | caspule | num_atoms | `overwrite[integer]` | pass-through | detector | num_atoms |
-| 5 | detector | atoms_to_remove | `overwrite[list]` | pass-through | caspule | atoms_to_remove |
-| 6 | detector | molecule_additions | `map[float]` (deltas) | pass-through | nfsim | observables (in) |
-| 7 | nfsim | observables | `map[float]` (deltas) | self-loop | nfsim | observables (out) |
-| 8 | caspule | thermo + cluster scalars | `overwrite[T]` | sink | emitter | — |
+Each `.pbg.json` references its three input files **by relative path**;
+the runner resolves them against the JSON's directory, so the bundles
+are self-contained.
 
-Stores 6 and 7 share one path (`stores/species`) so detector additions
-and NFSim's own deltas accumulate in a single `map[float]` pool.
-
-## Updates to the wrapped tools
-
-The composite **adds an `atoms_to_remove` input port to
-`pbg_caspule.processes.CASPULEProcess`** (`overwrite[list]`). When
-non-empty, CASPULE issues a temporary group + `delete_atoms group ...`
-before integrating; otherwise the wrapper's behavior is unchanged.
-Three new tests in `pbg-caspule/tests/test_processes.py` cover the
-removal path (basic deletion, empty no-op, idempotent re-issue).
-
-`pbg-nfsim` is used unchanged.
-
-## Install
+### Run from the command line
 
 ```bash
-git clone <this repo> pbg-composite-nfsim-caspule
-cd pbg-composite-nfsim-caspule
-
-uv venv .venv
-source .venv/bin/activate
-uv pip install process-bigraph bigraph-schema bigraph-viz pyyaml pytest matplotlib plotly mpich
-uv pip install "setuptools<81"          # bionetgen needs pkg_resources
-uv pip install -e .
-
-# editable installs of the wrapped tools (sibling clones)
-uv pip install -e ../pbg-caspule
-uv pip install -e ../pbg-nfsim
+python -m pbg_composite_nfsim_caspule examples/composite_dimer.pbg.json
 ```
 
-## Quick start
+That's it — the runner loads the PBG document, resolves the relative
+input-file paths, builds the Composite, runs for the default 5.0
+lj-time-units, and prints a summary:
+
+```text
+final time:           5.0
+CASPULE atoms (end):  0
+CASPULE bonds (end):  0
+CASPULE clusters:     0 (largest 0)
+NFSim species:        {'Dimer': 12.0, 'Active': 88.0}
+```
+
+A `pbg-composite-nfsim-caspule` console script is installed alongside,
+so you can also call it directly:
+
+```bash
+pbg-composite-nfsim-caspule examples/composite_polymer.pbg.json --total-time 2 --output run.json
+```
+
+Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--caspule PATH`     | Override the LAMMPS / CASPULE input file |
+| `--detector PATH`    | Override the detector YAML |
+| `--nfsim PATH`       | Override the BNGL model |
+| `--total-time T`     | Run for `T` lj-time-units (default `5.0`) |
+| `--output PATH`      | Write summary + emitter history as JSON |
+| `--quiet`            | Suppress stdout summary |
+
+### Run from Python
+
+The same entry point is exposed programmatically:
+
+```python
+from pbg_composite_nfsim_caspule import run
+
+summary = run(
+    'examples/composite_dimer.pbg.json',
+    total_time=2.0,
+    output='run.json',     # optional: dump summary + emitter history
+)
+print(summary['nfsim_species'])
+```
+
+For full programmatic control (custom wiring, intervals, decoupled
+mode for sanity checks), use the lower-level builders:
 
 ```python
 from process_bigraph import Composite
@@ -103,24 +109,101 @@ doc = build_document(
 )
 sim = Composite({'state': doc}, core=build_core())
 sim.run(5.0)
-print(sim.state['stores']['species'])    # {'Dimer': ..., 'Active': ...}
-print(sim.state['stores']['num_atoms'])  # CASPULE atoms still in the box
 ```
 
-## Demo
+### Author your own composite
+
+To build a new experiment, copy one of the example bundles and edit
+the four files:
+
+1. **`*.in`** — the LAMMPS / CASPULE script that defines the spatial
+   dynamics. Any `fix bond/create`, `fix bond/break`, or
+   `fix bond/create/random` set-up works; the wrapper strips out
+   `run` / `rerun` commands and drives integration itself.
+2. **`*.bngl`** — the BNGL model with the species and rules NFSim
+   should run on the non-spatial pool. **Use named parameters for
+   seed counts** (`Dimer() init_Dimer`, not `Dimer() 0`) — see
+   [`examples/nfsim_dimer_kinetics.bngl`](examples/nfsim_dimer_kinetics.bngl)
+   for the pattern.
+3. **`*.yaml`** — the detector rules. Each rule maps a CASPULE-side
+   pattern (a bond-type cluster of a given size, or an atom-type
+   filter) to one NFSim observable name and decides whether to remove
+   the matched atoms. See
+   [`examples/detector_polymer.yaml`](examples/detector_polymer.yaml)
+   for a multi-rule set-up.
+4. **`*.pbg.json`** — the composite document. Easiest to regenerate
+   from `build_document(...)` with your new file names; you can also
+   edit the JSON in-place to change intervals or wiring. The
+   relative input-file paths inside `caspule.config.input_file`,
+   `detector.config.config_file`, and `nfsim.config.model_file` are
+   the only fields the runner cares about.
+
+## Architecture
+
+```
+                +----------+    positions, bonds,    +----------+    molecule_     +-------+
+                |          |    atom_types           |          |    additions     |       |
+input.in -----> | CASPULE  | ----------------------> | Detector | ---------------> | NFSim | <-- input.bngl
+                |          | <---------------------- |          |                  |       |
+                +----------+    atoms_to_remove      +----------+                  +-------+
+                                                          ^
+                                                          | input.yaml (rules)
+```
+
+The full wiring lives in
+[`pbg_composite_nfsim_caspule/wiring.py`](pbg_composite_nfsim_caspule/wiring.py).
+
+| # | Producer | Port | Schema | Case | Consumer | Port |
+|---|---|---|---|---|---|---|
+| 1 | caspule | positions | `overwrite[list]` | pass-through | detector | positions |
+| 2 | caspule | bonds | `overwrite[list]` | pass-through | detector | bonds |
+| 3 | caspule | atom_types | `overwrite[list]` | pass-through | detector | atom_types |
+| 4 | caspule | num_atoms | `overwrite[integer]` | pass-through | detector | num_atoms |
+| 5 | detector | atoms_to_remove | `overwrite[list]` | pass-through | caspule | atoms_to_remove |
+| 6 | detector | molecule_additions | `map[float]` | pass-through | nfsim | observables (in) |
+| 7 | nfsim | observables | `map[float]` | self-loop | nfsim | observables (out) |
+| 8 | caspule | thermo + cluster scalars | `overwrite[T]` | sink | emitter | — |
+
+Rows 6 and 7 share one store path (`stores/species`) so detector
+additions and NFSim's own deltas compose in a single `map[float]`
+pool.
+
+## Updates to the wrapped tools
+
+This composite **adds an `atoms_to_remove` input port to
+`pbg_caspule.processes.CASPULEProcess`** (`overwrite[list]`). When
+non-empty, CASPULE issues a temporary group +
+`delete_atoms group ...` before integrating; otherwise the wrapper's
+behaviour is unchanged. Three tests in
+`pbg-caspule/tests/test_processes.py` cover the removal path. `pbg-nfsim`
+is used unchanged.
+
+## Install
+
+```bash
+git clone https://github.com/vivarium-collective/pbg-composite-nfsim-caspule.git
+cd pbg-composite-nfsim-caspule
+
+uv venv .venv
+source .venv/bin/activate
+uv pip install process-bigraph bigraph-schema bigraph-viz pyyaml pytest matplotlib plotly mpich
+uv pip install "setuptools<81"          # bionetgen needs pkg_resources
+uv pip install -e .
+
+# editable installs of the wrapped tools (sibling clones recommended)
+uv pip install -e ../pbg-caspule
+uv pip install -e ../pbg-nfsim
+```
+
+## Demo report
 
 ```bash
 python demo/demo_report.py
 ```
 
-Produces `demo/report.html` containing three side-by-side runs:
-
-* **decoupled**: detector outputs routed to dead-end stores. Spatial
-  pool stays full, species pool stays at zero — sanity check.
-* **coupled**: actual composition. Watch CASPULE atoms drain as
-  dimers form, and NFSim's species pool grow.
-* **stressed**: same coupling with NFSim ticking 5x faster, so
-  Decay drains the pool fast enough to reach quasi-steady state.
+Regenerates `demo/report.html` (and the version served at
+[vivarium-collective.github.io/pbg-composite-nfsim-caspule](https://vivarium-collective.github.io/pbg-composite-nfsim-caspule/))
+by running all four configurations end-to-end.
 
 ## Tests
 
@@ -128,29 +211,26 @@ Produces `demo/report.html` containing three side-by-side runs:
 pytest
 ```
 
-Three suites:
+Four suites:
 
-* `tests/test_detector.py` — pure-function unit tests on the detector
-  rules, no Composite involved.
-* `tests/test_assembly.py` — `Composite()` instantiates without
-  schema-reconciliation errors, in both coupled and decoupled modes.
-* `tests/test_run.py` — end-to-end run; asserts that the species pool
-  receives matter *and* that CASPULE loses atoms — the only way both
-  can be true is if the full bridge ran.
+* `tests/test_detector.py` — pure-function unit tests on detector rules.
+* `tests/test_assembly.py` — `Composite()` instantiates without schema-reconciliation errors, in both coupled and decoupled modes.
+* `tests/test_run.py` — end-to-end run; asserts that the species pool receives matter *and* CASPULE loses atoms.
+* `tests/test_cli.py` — `python -m pbg_composite_nfsim_caspule <pbg.json>` works end-to-end with the bundled examples and respects `--caspule / --detector / --nfsim` overrides.
 
 ## Limitations
 
 * The detector currently treats every match as one molecule of one
-  named observable. There is no "this cluster produces 2 of A and 1 of B"
-  rule; if you need that, layer a second detector or extend
+  named observable. There is no "this cluster produces 2 of A and
+  1 of B" rule; if you need that, layer a second detector or extend
   `DetectorRule`.
-* Matched atoms are removed from CASPULE *atomically*; if you need
+* Matched atoms are removed from CASPULE atomically; if you need
   some matched atoms to stay (e.g., a chaperone in the cluster
   remains in the spatial pool), add a per-rule `keep_atoms` filter.
 * NFSim's BNGL seed-species substitution is regex-based; seed lines
   must use named parameters, not literal numbers, or the substitution
   may bind to the wrong line. See `examples/nfsim_dimer_kinetics.bngl`.
-* The composition is one-way at the species layer: NFSim's outputs
-  do not flow back into CASPULE as new spatial atoms. Adding that
+* The composition is one-way at the species layer: NFSim outputs do
+  not flow back into CASPULE as new spatial atoms. Adding that
   reverse coupling would require a CASPULE-side Step that injects
   atoms (LAMMPS `create_atoms` per-step), which is not implemented.

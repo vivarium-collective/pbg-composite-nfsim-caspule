@@ -1,0 +1,250 @@
+{
+  "caspule": {
+    "_type": "process",
+    "address": "local:CASPULEProcess",
+    "config": {
+      "input_file": "caspule_polymer.in",
+      "input_script": ""
+    },
+    "interval": 0.05,
+    "inputs": {
+      "atoms_to_remove": [
+        "stores",
+        "atoms_to_remove"
+      ]
+    },
+    "outputs": {
+      "temperature": [
+        "stores",
+        "temperature"
+      ],
+      "potential_energy": [
+        "stores",
+        "potential_energy"
+      ],
+      "kinetic_energy": [
+        "stores",
+        "kinetic_energy"
+      ],
+      "total_energy": [
+        "stores",
+        "total_energy"
+      ],
+      "pressure": [
+        "stores",
+        "pressure"
+      ],
+      "volume": [
+        "stores",
+        "volume"
+      ],
+      "box_dimensions": [
+        "stores",
+        "box_dimensions"
+      ],
+      "num_atoms": [
+        "stores",
+        "num_atoms"
+      ],
+      "positions": [
+        "stores",
+        "positions"
+      ],
+      "velocities": [
+        "stores",
+        "velocities"
+      ],
+      "atom_types": [
+        "stores",
+        "atom_types"
+      ],
+      "num_bonds": [
+        "stores",
+        "num_bonds"
+      ],
+      "bonds": [
+        "stores",
+        "bonds"
+      ],
+      "bonds_by_type": [
+        "stores",
+        "bonds_by_type"
+      ],
+      "bond_energy": [
+        "stores",
+        "bond_energy"
+      ],
+      "formed_bonds": [
+        "stores",
+        "formed_bonds"
+      ],
+      "broken_bonds": [
+        "stores",
+        "broken_bonds"
+      ],
+      "num_clusters": [
+        "stores",
+        "num_clusters"
+      ],
+      "largest_cluster": [
+        "stores",
+        "largest_cluster"
+      ],
+      "cluster_sizes": [
+        "stores",
+        "cluster_sizes"
+      ]
+    }
+  },
+  "detector": {
+    "_type": "step",
+    "address": "local:ObservableDetector",
+    "config": {
+      "config_file": "detector_polymer.yaml",
+      "rules": []
+    },
+    "inputs": {
+      "positions": [
+        "stores",
+        "positions"
+      ],
+      "bonds": [
+        "stores",
+        "bonds"
+      ],
+      "atom_types": [
+        "stores",
+        "atom_types"
+      ],
+      "num_atoms": [
+        "stores",
+        "num_atoms"
+      ]
+    },
+    "outputs": {
+      "atoms_to_remove": [
+        "stores",
+        "atoms_to_remove"
+      ],
+      "molecule_additions": [
+        "stores",
+        "species"
+      ]
+    }
+  },
+  "nfsim": {
+    "_type": "process",
+    "address": "local:NFSimProcess",
+    "config": {
+      "model_file": "nfsim_polymer_kinetics.bngl",
+      "n_steps": 20
+    },
+    "interval": 0.5,
+    "inputs": {
+      "observables": [
+        "stores",
+        "species"
+      ]
+    },
+    "outputs": {
+      "observables": [
+        "stores",
+        "species"
+      ]
+    }
+  },
+  "stores": {
+    "positions": [],
+    "bonds": [],
+    "atom_types": [],
+    "num_atoms": 0,
+    "atoms_to_remove": [],
+    "species": {
+      "Dimer": 0.0,
+      "Trimer": 0.0,
+      "Polymer": 0.0
+    },
+    "_decoupled": {
+      "atoms_to_remove": [],
+      "species_additions": {
+        "Dimer": 0.0,
+        "Trimer": 0.0,
+        "Polymer": 0.0
+      }
+    }
+  },
+  "emitter": {
+    "_type": "step",
+    "address": "local:ram-emitter",
+    "config": {
+      "emit": {
+        "temperature": "float",
+        "potential_energy": "float",
+        "kinetic_energy": "float",
+        "total_energy": "float",
+        "bond_energy": "float",
+        "num_atoms": "integer",
+        "num_bonds": "integer",
+        "formed_bonds": "integer",
+        "broken_bonds": "integer",
+        "num_clusters": "integer",
+        "largest_cluster": "integer",
+        "time": "float",
+        "species": "map[float]"
+      }
+    },
+    "inputs": {
+      "temperature": [
+        "stores",
+        "temperature"
+      ],
+      "potential_energy": [
+        "stores",
+        "potential_energy"
+      ],
+      "kinetic_energy": [
+        "stores",
+        "kinetic_energy"
+      ],
+      "total_energy": [
+        "stores",
+        "total_energy"
+      ],
+      "bond_energy": [
+        "stores",
+        "bond_energy"
+      ],
+      "num_atoms": [
+        "stores",
+        "num_atoms"
+      ],
+      "num_bonds": [
+        "stores",
+        "num_bonds"
+      ],
+      "formed_bonds": [
+        "stores",
+        "formed_bonds"
+      ],
+      "broken_bonds": [
+        "stores",
+        "broken_bonds"
+      ],
+      "num_clusters": [
+        "stores",
+        "num_clusters"
+      ],
+      "largest_cluster": [
+        "stores",
+        "largest_cluster"
+      ],
+      "time": [
+        "global_time"
+      ],
+      "species": [
+        "stores",
+        "species"
+      ]
+    }
+  }
+}

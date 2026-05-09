@@ -20,6 +20,9 @@ dependencies = [
 test = ["pytest"]
 demo = ["matplotlib", "plotly"]
 
+[project.scripts]
+pbg-composite-nfsim-caspule = "pbg_composite_nfsim_caspule.run:main"
+
 [tool.setuptools.packages.find]
 include = ["pbg_composite_nfsim_caspule*"]
 
